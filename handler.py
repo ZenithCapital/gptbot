@@ -1,70 +1,48 @@
-import sys
-sys.path.insert(0, 'vendor')
-
-import os
+from flask import Flask, request, jsonify
 import requests
-import random
-import json
+import datetime
 
-PREFIX = '+'
-OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
-OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-MAX_MESSAGE_LENGTH = 1000
+app = Flask(__name__)
 
-def receive(event, context):
-    message = json.loads(event['body'])
+BOT_ID = 'your_bot_id_here'
 
-    bot_id = message['bot_id']
-    response = process_message(message)
-    if response:
-        send(response, bot_id)
+sales_total = 0
 
-    return {
-        'statusCode': 200,
-        'body': 'ok'
-    }
+@app.route('/callback', methods=['POST'])
+def callback():
+    data = request.get_json()
+    process_message(data)
+    return 'ok', 200
 
 def process_message(message):
-    # Prevent self-reply
-    if message['sender_type'] != 'bot':
-        text = message['text']
-        if text.startswith(PREFIX):
-            return process_text(text.lstrip(PREFIX))
+    global sales_total
+    text = message['text']
+    timestamp = datetime.datetime.now()
 
-def process_text(text):
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + OPENAI_API_KEY
-    }
+    # Check if the message is within the time range 8 AM to 4 AM
+    if 8 <= timestamp.hour or timestamp.hour < 4:
+        # Look for numbers following a '$' symbol in the message
+        sales = extract_sales(text)
+        if sales:
+            sales_total += sales
 
-    data = {
-        'model': 'gpt-3.5-turbo',
-        'messages': [{'role': 'user', 'content': text}],
-        'temperature': 0.5,
-    }
+def extract_sales(text):
+    import re
+    matches = re.findall(r'\$(\d+(?:\.\d{1,2})?)', text)
+    sales_sum = sum(float(match) for match in matches)
+    return sales_sum
 
-    response = requests.post(OPENAI_ENDPOINT, headers=headers, json=data)
+@app.route('/sales_total', methods=['GET'])
+def get_sales_total():
+    return jsonify({'sales_total': sales_total})
 
-    if response.status_code == 200:
-        print(response.json())
-        return response.json()['choices'][0]['message']['content']
-    return 'Error: ' + response.text.strip()
-
-
-def send(text, bot_id):
+def send_message(text):
     url = 'https://api.groupme.com/v3/bots/post'
-
-    if len(text) > MAX_MESSAGE_LENGTH:
-        # If text is too long for one message, split it up over several
-        for block in [text[i:i + MAX_MESSAGE_LENGTH] for i in range(0, len(text), MAX_MESSAGE_LENGTH)]:
-            send(block, bot_id)
-            time.sleep(0.3)
-        return
-
-    message = {
-        'bot_id': bot_id,
-        'text': text,
+    payload = {
+        'bot_id': BOT_ID,
+        'text': text
     }
-    r = requests.post(url, json=message)
+    requests.post(url, json=payload)
 
-#print(process_text('Can you tell me how to get into Yale?'))
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
